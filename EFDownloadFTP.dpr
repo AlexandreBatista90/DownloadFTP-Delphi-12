@@ -1,4 +1,4 @@
-program DownloadFTPCaixaLocal;
+program EFDownloadFTP;
 
 
 
@@ -6,7 +6,7 @@ program DownloadFTPCaixaLocal;
 
 uses
   Vcl.Forms,
-  DownloadCaixaLocal in 'DownloadCaixaLocal.pas' {DownloadFTP_CaixaLocal},
+  DownloadCaixaLocal in 'DownloadCaixaLocal.pas' {frmPrincipal},
   Vcl.Themes,
   Vcl.Styles,
   UnitSobre in 'UnitSobre.pas' {FormSobre},
@@ -21,7 +21,7 @@ begin
   Application.MainFormOnTaskbar := True;
   Application.Title := 'Download FTP Caixa Local';
   TStyleManager.TrySetStyle('Sapphire Kamri');
-  Application.CreateForm(TDownloadFTP_CaixaLocal, DownloadFTP_CaixaLocal);
+  Application.CreateForm(TfrmPrincipal, frmPrincipal);
   Application.CreateForm(TFormSobre, FormSobre);
   Application.CreateForm(TFormAtu, FormAtu);
   Application.Run;

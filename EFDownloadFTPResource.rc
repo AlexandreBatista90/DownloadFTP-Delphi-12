@@ -1,0 +1,2 @@
+DLL_LIB RCDATA "libeay32.dll"
+DLL_SSL RCDATA "ssleay32.dll"

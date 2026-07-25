@@ -7,6 +7,9 @@ uses
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.Buttons, Vcl.ExtCtrls,
   Vcl.Imaging.jpeg, UnitAtu;
 
+
+  function PegarVersaoEXE: string;
+
 type
   TFormSobre = class(TForm)
     memoTextos: TMemo;
@@ -42,7 +45,7 @@ var
   Buffer: TBytes;
   FileInfo: PVSFixedFileInfo;
 begin
-  Result := '1.0.2.0'; // Retorno padrão caso dê erro
+  Result := '1.1.4.0'; // Retorno padrão caso dê erro
 
 
   Size := GetFileVersionInfoSize(PChar(Application.ExeName), Handle);
@@ -87,17 +90,93 @@ begin
     // --- VERSÃO ATUAL ---
     FormAtu.LogAtu.SelAttributes.Style := [fsBold];
     FormAtu.LogAtu.Lines.Add('VERSÃO ATUAL: ' + PegarVersaoEXE); // Puxa a versão do Delphi
-    FormAtu.LogAtu.Lines.Add('CORREÇÕES E EVOLUÇÕES (v' + PegarVersaoEXE + '):');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
+    FormAtu.LogAtu.Lines.Add('(CORREÇÕES E EVOLUÇÕES):');
+
 
     FormAtu.LogAtu.SelAttributes.Style := [];
     FormAtu.LogAtu.Lines.Add('--------------------------------------------------');
     FormAtu.LogAtu.Lines.Add('');
-    //
+
+
+    FormAtu.LogAtu.Lines.Add('> AUTO-ATUALIZAÇÃO DO SISTEMA: Implementada rotina de atualização automática via FTP. Ao abrir, o sistema verifica de forma rápida (utilizando a mesma conexão) se há uma nova versão disponível na pasta de suporte. Se houver, exibe um aviso para o usuário atualizar (ou força de forma automática se configurado), baixa o novo executável, realiza a substituição limpa em memória sem uso de scripts .bat (evitando bloqueios de antivírus como o BitDefender), e reinicia a aplicação nova;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+
+    FormAtu.LogAtu.Lines.Add('> VERIFICAÇÃO DE AMBIENTE DE USO: ao abrir, o app verifica se está sendo executado no Cloud ou no ambiente da Empresa Fácil. Se sim, não pede senha - e permite fazer upload sem precisar de tecla de atalho;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+
+
+
+
+
+
+    // --- VERSÕES ANTERIORES  ---
+    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
+    FormAtu.LogAtu.Lines.Add('VERSÕES ANTERIORES:');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
+    FormAtu.LogAtu.Lines.Add('(v1.1.5.0):');
+
+    FormAtu.LogAtu.SelAttributes.Style := [];
+    FormAtu.LogAtu.Lines.Add('--------------------------------------------------');
+    FormAtu.LogAtu.Lines.Add('');
+
+
+      //
+    FormAtu.LogAtu.Lines.Add('> ENVIO DE ARQUIVOS: Criada função restrita com senha para envio de arquivos ao FTP. É possível enviar vários arquivos de uma vez arrastando e soltando com o mouse ou usando CTRL+V. Trava a tela durante as transferências para evitar cliques acidentais, não permite envio de . exe / .bat / .php, e em caso de falha, tenta 3 vezes e pergunta se deseja continuar;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+
+
+    FormAtu.LogAtu.Lines.Add('> BLOQUEIO DE INATIVIDADE: Implementado mais um mecanismo de segurança, para usos em empresas. Após 10 minutos de ociosidade, a interface trava automaticamente, ocultando os dados e exigindo a senha do suporte para retomada; Além disso se ocorrer erro de rede e o PC ficar abandonado, após 10 minutos na tela de mensagem ''parada'' o aplicativo fecha a mensagem de erro sozinho, exclui o fragmento corrompido (.part) do disco e entra em modo de segurança protegido por senha; para evitar uso indevido do aplicativo;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+
     FormAtu.LogAtu.Lines.Add('> FALHA DE DOWNLOAD: Agora a aplicação tenta se reconectar caso tenha alguma falha de rede/internet/ftp. Após 5 tentativas pergunta se quer tentar novamente ou nao ; se sim, tenta mais 5 vezes. Se conseguir se reconectar, tenta continuar o download de onde parou;');
     FormAtu.LogAtu.Lines.Add('');
     FormAtu.LogAtu.Lines.Add('');
 
+
+
     //
+    FormAtu.LogAtu.Lines.Add('> USO DO SUPORTE: ao abrir, se digitada senha da pasta de backup, o app conecta na pasta "BACKUP", e não na pasta "CAIXA LOCAL", que antes era fixa;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+    //
+    FormAtu.LogAtu.Lines.Add('> MELHORIAS DE ESTABILIDADE: Mesmo em uso, durante um upload, ou download, a conexão podia ficar ''ociosa'' e gerar erro, se demorasse muito. Implementada rotina para permanecer com a conexão ativa, a fim de evitar erros;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+    //
+    FormAtu.LogAtu.Lines.Add('> CONEXÃO: O sistema já inicia conectando ao servidor em segundo plano, economizando seu tempo de espera na tela inicial;');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+
+
+
+
+
+    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
+    FormAtu.LogAtu.Lines.Add('(v1.0.3.0):');
+
+    FormAtu.LogAtu.SelAttributes.Style := [];
+    FormAtu.LogAtu.Lines.Add('--------------------------------------------------');
+
+
+    FormAtu.LogAtu.Lines.Add('> DOWNLOAD FLUIDO: O processo de download dos arquivos roda em segundo plano, garantindo que a tela do aplicativo nunca congele ou fique ''Não Respondendo'' durante o download.');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('> ARQUIVOS DLLs: A aplicação não depende do técnico copiar arquivos DLLs para a pasta em que será executado; ele descompacta as duas DLLs necessárias na pasta ''TEMP'' do Windows, e depois as exclui.');
+    FormAtu.LogAtu.Lines.Add('');
+    FormAtu.LogAtu.Lines.Add('');
+            //
     FormAtu.LogAtu.Lines.Add('> EXECUTÁVEL AUTO-ASSINADO: Executável assinado digitalmente para evitar bloqueios do Windows Defender, SmartScreen e Smart App Control, bastando seguir os mesmos passos atualmente pro ''Efw.exe'';');
     FormAtu.LogAtu.Lines.Add('');
     FormAtu.LogAtu.Lines.Add('');
@@ -109,39 +188,6 @@ begin
 
     //
     FormAtu.LogAtu.Lines.Add('> EXCLUSÃO DE ARQUIVOS DO FTP: Adicionado o atalho oculto "Ctrl + Delete" na lista de arquivos. Ele permite que o suporte exclua arquivos diretamente do FTP - protegido por senha para evitar exclusões acidentais ou acessos indevidos;');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.Lines.Add('');
-
-
-    // --- VERSÕES ANTERIORES  ---
-    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
-    FormAtu.LogAtu.Lines.Add('VERSÕES ANTERIORES:');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
-    FormAtu.LogAtu.Lines.Add('(v1.0.2.0):');
-
-    FormAtu.LogAtu.SelAttributes.Style := [];
-    FormAtu.LogAtu.Lines.Add('--------------------------------------------------');
-    FormAtu.LogAtu.Lines.Add('');
-
-    //
-    FormAtu.LogAtu.Lines.Add('> CONEXÃO: O sistema já inicia conectando ao servidor em segundo plano, economizando seu tempo de espera na tela inicial;');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.Lines.Add('');
-
-
-
-    FormAtu.LogAtu.SelAttributes.Style := [fsBold];
-    FormAtu.LogAtu.Lines.Add('(v1.0.1.0):');
-
-    FormAtu.LogAtu.SelAttributes.Style := [];
-    FormAtu.LogAtu.Lines.Add('--------------------------------------------------');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.Lines.Add('> PASTA DE DOWNLOAD: A sua pasta padrão de ''Downloads'' do Windows é identificada e selecionada automaticamente ao abrir o sistema;');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.Lines.Add('> DOWNLOAD FLUIDO: O processo de download dos arquivos roda em segundo plano, garantindo que a tela do aplicativo nunca congele ou fique ''Não Respondendo'' durante o download.');
-    FormAtu.LogAtu.Lines.Add('');
-    FormAtu.LogAtu.Lines.Add('> ARQUIVOS DLLs: A aplicação não depende do técnico copiar arquivos DLLs para a pasta em que será executado; ele descompacta as duas DLLs necessárias na pasta ''TEMP'' do Windows, e depois as exclui.');
     FormAtu.LogAtu.Lines.Add('');
     FormAtu.LogAtu.Lines.Add('');
 
@@ -177,7 +223,7 @@ begin
   // Alimenta o Memo1 usando a função dinâmica
   Memo1.Lines.Add('');
   Memo1.Lines.Add('');
-  Memo1.Lines.Add('Download FTP Caixa Local');
+  Memo1.Lines.Add('Download FTP');
 
 
   Memo1.Lines.Add('Versão ' + PegarVersaoEXE + ' - ' + FormatDateTime('dd/mm/yyyy', FileDateToDateTime(FileAge(Application.ExeName))));

@@ -3,8 +3,8 @@ object FormAtu: TFormAtu
   Top = 0
   BorderStyle = bsNone
   Caption = 'O que h'#225' de novo'
-  ClientHeight = 470
-  ClientWidth = 520
+  ClientHeight = 520
+  ClientWidth = 610
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
@@ -22,8 +22,8 @@ object FormAtu: TFormAtu
   end
   object SpeedButton1: TSpeedButton
     Left = 0
-    Top = 448
-    Width = 520
+    Top = 498
+    Width = 610
     Height = 22
     Align = alBottom
     Caption = 'Fechar'
@@ -36,8 +36,8 @@ object FormAtu: TFormAtu
     AlignWithMargins = True
     Left = 10
     Top = 10
-    Width = 500
-    Height = 428
+    Width = 590
+    Height = 478
     Margins.Left = 10
     Margins.Top = 10
     Margins.Right = 10

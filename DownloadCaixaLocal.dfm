@@ -1,29 +1,31 @@
-object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
+object frmPrincipal: TfrmPrincipal
   Left = 0
   Top = 0
   BorderIcons = [biSystemMenu, biMinimize]
   BorderStyle = bsSingle
-  Caption = 'Download FTP Caixa Local'
-  ClientHeight = 461
-  ClientWidth = 574
+  Caption = 'Download FTP - Transfer'#234'ncia de Arquivos'
+  ClientHeight = 521
+  ClientWidth = 634
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
   Font.Height = -12
   Font.Name = 'Segoe UI'
   Font.Style = []
+  KeyPreview = True
   Position = poScreenCenter
   OnCloseQuery = FormCloseQuery
   OnCreate = FormCreate
   OnDestroy = FormDestroy
+  OnKeyDown = FormKeyDown
   OnShow = FormShow
   TextHeight = 15
   object lvArquivos: TListView
     AlignWithMargins = True
     Left = 4
     Top = 49
-    Width = 566
-    Height = 270
+    Width = 626
+    Height = 330
     Margins.Left = 4
     Margins.Top = 4
     Margins.Right = 4
@@ -32,15 +34,15 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
     Columns = <
       item
         Caption = 'Nome'
-        Width = 388
+        Width = 430
       end
       item
         Caption = 'Tamanho'
-        Width = 70
+        Width = 82
       end
       item
         Caption = 'Data/Hora'
-        Width = 104
+        Width = 108
       end>
     ReadOnly = True
     RowSelect = True
@@ -55,21 +57,21 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
   end
   object pnlDireita: TPanel
     Left = 0
-    Top = 323
-    Width = 574
+    Top = 383
+    Width = 634
     Height = 50
     Align = alBottom
     BevelOuter = bvNone
     TabOrder = 1
     object lbSalver: TLabel
-      Left = 16
+      Left = 23
       Top = 19
       Width = 54
       Height = 15
       Caption = 'Salvar em:'
     end
     object edtDestino: TEdit
-      Left = 80
+      Left = 105
       Top = 11
       Width = 433
       Height = 29
@@ -83,7 +85,7 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       TabOrder = 0
     end
     object BitBtn1: TBitBtn
-      Left = 528
+      Left = 566
       Top = 11
       Width = 42
       Height = 29
@@ -170,14 +172,14 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
   end
   object Panel2: TPanel
     Left = 0
-    Top = 373
-    Width = 574
+    Top = 433
+    Width = 634
     Height = 70
     Align = alBottom
     BevelOuter = bvNone
     TabOrder = 2
     object lblProgresso: TLabel
-      Left = 114
+      Left = 146
       Top = 2
       Width = 55
       Height = 15
@@ -185,7 +187,7 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       Visible = False
     end
     object btnAbrirNoExplorer: TSpeedButton
-      Left = 306
+      Left = 338
       Top = 23
       Width = 129
       Height = 40
@@ -193,7 +195,7 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       OnClick = btnAbrirNoExplorerClick
     end
     object btnDownload: TSpeedButton
-      Left = 153
+      Left = 169
       Top = 23
       Width = 129
       Height = 40
@@ -203,8 +205,8 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       OnClick = btnDownloadClick
     end
     object pbDownload: TProgressBar
-      Left = 257
-      Top = -1
+      Left = 285
+      Top = 0
       Width = 214
       Height = 19
       TabOrder = 0
@@ -216,20 +218,20 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
   object pnlTop: TPanel
     Left = 0
     Top = 0
-    Width = 574
+    Width = 634
     Height = 45
     Align = alTop
     BevelOuter = bvNone
     TabOrder = 3
     object lblPastaFTP: TLabel
-      Left = 53
-      Top = 18
+      Left = 220
+      Top = 16
       Width = 70
       Height = 15
       Caption = 'Pasta no FTP:'
     end
     object btnConectar: TButton
-      Left = 439
+      Left = 494
       Top = 3
       Width = 114
       Height = 39
@@ -238,8 +240,8 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       OnClick = btnConectarClick
     end
     object Edit1: TEdit
-      Left = 231
-      Top = 12
+      Left = 310
+      Top = 8
       Width = 116
       Height = 29
       Enabled = False
@@ -252,16 +254,25 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       TabOrder = 1
       Text = '/CAIXALOCAL/'
     end
+    object btnAlternaPasta: TButton
+      Left = 25
+      Top = 3
+      Width = 114
+      Height = 39
+      Caption = 'Alternar Pasta'
+      TabOrder = 2
+      OnClick = btnAlternaPastaClick
+    end
   end
   object pnlLoading: TPanel
     Left = 0
     Top = 45
-    Width = 574
-    Height = 278
+    Width = 634
+    Height = 338
     Align = alClient
     TabOrder = 4
     object btnConfirmarSenha: TSpeedButton
-      Left = 309
+      Left = 339
       Top = 205
       Width = 87
       Height = 22
@@ -270,7 +281,7 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       OnClick = btnConfirmarSenhaClick
     end
     object lblSenhaExclusiva: TLabel
-      Left = 147
+      Left = 171
       Top = 179
       Width = 285
       Height = 15
@@ -283,15 +294,15 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       ParentFont = False
     end
     object ActivityIndicator1: TActivityIndicator
-      Left = 269
-      Top = 136
+      Left = 301
+      Top = 143
       Animate = True
       StyleElements = []
     end
     object edtSenha: TEdit
-      Left = 181
+      Left = 204
       Top = 205
-      Width = 106
+      Width = 99
       Height = 23
       PasswordChar = '*'
       TabOrder = 1
@@ -301,15 +312,15 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
   end
   object pnlSobre: TPanel
     Left = 0
-    Top = 443
-    Width = 574
+    Top = 503
+    Width = 634
     Height = 18
     Align = alBottom
     TabOrder = 5
     object btnSobre: TSpeedButton
       Left = 1
       Top = 1
-      Width = 572
+      Width = 632
       Height = 16
       Align = alClient
       Caption = 'Sobre'
@@ -321,7 +332,7 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
     end
   end
   object ImageList1: TImageList
-    Height = 40
+    Height = 35
     Width = 1
     Left = 24
     Top = 96
@@ -1013,5 +1024,12 @@ object DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal
       FFFFFFFFE0000000000000000000000000000000FFFFFFFFE000000000000000
       0000000000000000FFFFFFFFE000000000000000000000000000000000000000
       000000000000000000000000000000000000}
+  end
+  object TimerInatividade: TTimer
+    Enabled = False
+    Interval = 600000
+    OnTimer = TimerInatividadeTimer
+    Left = 16
+    Top = 229
   end
 end

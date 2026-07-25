@@ -11,10 +11,10 @@ uses
   IdFTP, IdFTPList, IdFTPCommon , IdAllFTPListParsers, System.Win.TaskbarCore,
   Vcl.Taskbar, System.DateUtils, Winapi.CommCtrl, Winapi.ShellAPI,
   IdAntiFreezeBase, IdAntiFreeze, System.IOUtils, IdSSLOpenSSLHeaders,
-  Vcl.WinXCtrls, UnitSobre, IdException, ConfigCredenciais;
+  Vcl.WinXCtrls, UnitSobre, IdException, ConfigCredenciais, Vcl.Clipbrd, System.UITypes, IdStack;
 
 type
-  TDownloadFTP_CaixaLocal = class(TForm)
+  TfrmPrincipal = class(TForm)
     lblPastaFTP: TLabel;
     Edit1: TEdit;
     btnConectar: TButton;
@@ -43,6 +43,8 @@ type
     edtSenha: TEdit;
     btnConfirmarSenha: TSpeedButton;
     lblSenhaExclusiva: TLabel;
+    TimerInatividade: TTimer;
+    btnAlternaPasta: TButton;
     procedure FormCreate(Sender: TObject);
     procedure btnConectarClick(Sender: TObject);
     procedure lvArquivosDblClick(Sender: TObject);
@@ -67,6 +69,9 @@ type
     procedure lvArquivosKeyDown(Sender: TObject; var Key: Word;
       Shift: TShiftState);
     procedure edtSenhaKeyPress(Sender: TObject; var Key: Char);
+    procedure TimerInatividadeTimer(Sender: TObject);
+    procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure btnAlternaPastaClick(Sender: TObject);
 
   private
     { Private declarations }
@@ -81,30 +86,55 @@ type
     FPararConexao: Boolean;
     FSenhaLiberada: Boolean;
 
+    FUploadLiberado: Boolean;
+    FUploadEmAndamento: Boolean;
 
+    FPastaDestinoFTP: string;
+
+    FAtualizando: Boolean;
+
+    FVerificandoAtualizacao: Boolean;
+
+
+    procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
+    procedure TravarTelaPorInatividade(Sender: TObject);
 
     procedure AtualizarSetasOrdenacao;
     procedure ConectarEmSegundoPlano;
     procedure AtualizarListaEmSegundoPlano;
+
+    // intercepta arquivos arrastados do Windows para o programa
+    procedure WMDropFiles(var Msg: TWMDropFiles); message WM_DROPFILES;
+
+    procedure ProcessarFilaUpload(FilaArquivos: TStringList);
+
+
+    function IsRedeSuporte: Boolean;
+
+    procedure RemoveExecutavelAntigo;
+    procedure VerificarAtualizacaoEmSegundoPlano;
+    procedure RealizarDownloadAtualizacao;
+
 
   public
     { Public declarations }
   end;
 
 var
-  DownloadFTP_CaixaLocal: TDownloadFTP_CaixaLocal;
+  frmPrincipal: TfrmPrincipal;
 
 implementation
 
 {$R *.dfm}
 
-procedure TDownloadFTP_CaixaLocal.ConectarEmSegundoPlano;
+procedure TfrmPrincipal.ConectarEmSegundoPlano;
 begin
   // 1. PREPARAÇÃO VISUAL (Roda na linha principal)
   FCarregando := True;
   pnlLoading.BringToFront;
   pnlLoading.Visible := True;
   btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
   lvArquivos.Items.Clear;
 
   // 2. DISPARA A THREAD DE REDE
@@ -127,13 +157,16 @@ begin
       IdFTP1.IOHandler := IdSSLIOHandlerSocketOpenSSL1;
       IdFTP1.UseTLS := TIdUseTLS.utUseExplicitTLS;
       IdFTP1.DataPortProtection := TIdFTPDataPortSecurity.ftpdpsPrivate;
+      IdFTP1.NATKeepAlive.UseKeepAlive := True;
+      IdFTP1.NATKeepAlive.IdleTimeMS := 30000; // Envia sinal invisível a cada 30s
+
       IdSSLIOHandlerSocketOpenSSL1.SSLOptions.Method := TIdSSLVersion.sslvTLSv1_2;
       IdSSLIOHandlerSocketOpenSSL1.SSLOptions.Mode := TIdSSLMode.sslmClient;
 
       // Conecta e puxa a lista (ISTO É O QUE DEMORA OS 7 SEGUNDOS)
       IdFTP1.Connect;
       if FPararConexao then Exit; // Se o usuário fechou, sai da Thread imediatamente!
-      IdFTP1.ChangeDir('/CAIXALOCAL/');
+      IdFTP1.ChangeDir(FPastaDestinoFTP);
       IdFTP1.List;
       if FPararConexao then Exit;
 
@@ -189,7 +222,11 @@ begin
       // 4. FINALIZAÇÃO E AVALIAÇÃO DA SENHA
       FCarregando := False;
 
+      Edit1.text := FPastaDestinoFTP;
+
+
       btnConectar.Enabled := FSenhaLiberada;
+      btnAlternaPasta.Enabled := FSenhaLiberada;
       btnDownload.Enabled := FSenhaLiberada and (lvArquivos.Selected <> nil);
 
       // AVALIAÇÃO DE TEMPO: senha
@@ -202,7 +239,7 @@ begin
   end).Start;
 end;
 
-procedure TDownloadFTP_CaixaLocal.edtSenhaKeyPress(Sender: TObject;
+procedure TfrmPrincipal.edtSenhaKeyPress(Sender: TObject;
   var Key: Char);
 begin
   // #13 >> código do 'enter'
@@ -213,7 +250,7 @@ begin
   end;
 end;
 
-procedure TDownloadFTP_CaixaLocal.AtualizarListaEmSegundoPlano;
+procedure TfrmPrincipal.AtualizarListaEmSegundoPlano;
 begin
   // 1. VALIDAÇÃO RÁPIDA E RECONEXÃO AUTOMÁTICA
   if not IdFTP1.Connected then
@@ -233,6 +270,7 @@ begin
 
   // 2. PREPARAÇÃO VISUAL
   btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
   FCarregando := True;
   pnlLoading.BringToFront;
   pnlLoading.Visible := True;
@@ -245,15 +283,31 @@ begin
     ErroMsg: string;
   begin
     ErroMsg := '';
-    try
-      if FPararConexao then Exit;
-      // Comando instantâneo: Pede a lista da pasta atual
-      IdFTP1.List;
-      if FPararConexao then Exit;
-    except
-      on E: Exception do
-        ErroMsg := E.Message;
-    end;
+try
+   if FPararConexao then Exit;
+   IdFTP1.ChangeDir(FPastaDestinoFTP);
+   IdFTP1.List;
+   if FPararConexao then Exit;
+ except
+   on E: Exception do
+   begin
+     // Se a conexão foi resetada (10054), tenta um reconectar silencioso!
+     if Pos('10054', E.Message) > 0 then
+     begin
+       try
+         IdFTP1.Disconnect;
+         IdFTP1.Connect;
+         IdFTP1.ChangeDir(FPastaDestinoFTP);
+         IdFTP1.List;
+         ErroMsg := ''; // Sucesso na segunda tentativa!
+       except
+         on E2: Exception do ErroMsg := E2.Message;
+       end;
+     end
+     else
+       ErroMsg := E.Message; // Outro erro qualquer
+   end;
+ end;
 
     // 4. SINCRONIZA COM A TELA (Atualiza o visual)
     TThread.Synchronize(nil, procedure
@@ -283,7 +337,7 @@ begin
           end;
         finally
           lvArquivos.Items.EndUpdate;
-          btnConectar.Enabled := True;
+
         end;
 
         // Mantém a ordenação que o usuário tinha escolhido
@@ -292,9 +346,18 @@ begin
       end;
 
       // 5. FINALIZAÇÃO E EFEITO DE SUMIR O LOADING
-      btnDownload.Enabled := (lvArquivos.Selected <> nil);
-      pnlLoading.Visible := False;
-      FCarregando := False;
+      FCarregando := False; // Avisa que a rede terminou de trabalhar
+
+      // Só destrava os botões se a senha já estiver liberada (Cloud/Suporte ou digitada)
+      btnConectar.Enabled := FSenhaLiberada;
+      btnAlternaPasta.Enabled := FSenhaLiberada;
+      btnDownload.Enabled := FSenhaLiberada and (lvArquivos.Selected <> nil);
+
+      // Só esconde o painel que cobre a tela se a senha já estiver liberada!
+      if FSenhaLiberada then
+      begin
+        pnlLoading.Visible := False;
+      end;
 
     end);
   end).Start;
@@ -302,7 +365,7 @@ end;
 
 
 
-procedure TDownloadFTP_CaixaLocal.AtualizarSetasOrdenacao;
+procedure TfrmPrincipal.AtualizarSetasOrdenacao;
 var
   I: Integer;
   HeaderHandle: HWND;
@@ -340,7 +403,7 @@ begin
   end;
 end;
 
-procedure TDownloadFTP_CaixaLocal.BitBtn1Click(Sender: TObject);
+procedure TfrmPrincipal.BitBtn1Click(Sender: TObject);
 begin
   // Configura o diálogo para selecionar APENAS pastas, ignorando arquivos soltos
   FileOpenDialog1.Options := [TFileDialogOption.fdoPickFolders];
@@ -355,7 +418,7 @@ begin
   Self.ActiveControl := nil;
 end;
 
-procedure TDownloadFTP_CaixaLocal.btnConectarClick(Sender: TObject);
+procedure TfrmPrincipal.btnConectarClick(Sender: TObject);
 begin
   // Chama a atualização rápida em segundo plano
   AtualizarListaEmSegundoPlano;
@@ -364,14 +427,28 @@ begin
   Self.ActiveControl := nil;
 end;
 
-procedure TDownloadFTP_CaixaLocal.btnConfirmarSenhaClick(Sender: TObject);
+procedure TfrmPrincipal.btnConfirmarSenhaClick(Sender: TObject);
 begin
   // ANTI-SPAM: Se já estiver liberado, ignora qualquer duplo clique acidental ou excesso de "Enters"
   if FSenhaLiberada then Exit;
 
-  if edtSenha.Text = SENHA_APP then
+if (edtSenha.Text = SENHA_APP) or (edtSenha.Text = SENHA_BACKUP) then
+begin
+  // Roteamento inteligente baseado na senha
+  if edtSenha.Text = SENHA_BACKUP then
   begin
-    FSenhaLiberada := True;
+    FPastaDestinoFTP := '/BACKUP/';
+    Edit1.text := FPastaDestinoFTP;
+  end
+
+  else
+    FPastaDestinoFTP := '/CAIXALOCAL/';
+
+     FSenhaLiberada := True;
+
+    FPararConexao := False;
+
+    TimerInatividade.Enabled := True;
 
     // Oculta os 3 elementos visuais da senha de uma vez
     edtSenha.Visible := False;
@@ -383,17 +460,42 @@ begin
     btnAbrirNoExplorer.Enabled := True;
     BitBtn1.Enabled := True;
 
+    // Verifica se a thread de atualização AINDA está rodando
+    // A própria thread de atualização vai se encarregar de carregar a lista quando terminar.
+    if FVerificandoAtualizacao then
+    begin
+      pnlLoading.Visible := True;
+      ActivityIndicator1.Visible := True;
+      lblProgresso.Caption := 'Verificando atualizações...';
+      lblProgresso.Visible := True;
+      Exit; // Aborta a continuação desta procedure!
+    end;
+
     // AVALIAÇÃO DE TEMPO
-    if not FCarregando then
+if not FCarregando then
     begin
       pnlLoading.Visible := False;
       btnConectar.Enabled := True;
+      btnAlternaPasta.Enabled := True;
+
+      // Se a Thread original já tinha terminado de carregar a CAIXA LOCAL
+      // e o usuário entrou agora com a senha de BACKUP, forçamos o pulo de pasta!
+      if FPastaDestinoFTP = '/BACKUP/' then
+      begin
+
+        ActivityIndicator1.Visible := True;
+
+        AtualizarListaEmSegundoPlano; // Aciona a sua rotina para buscar a lista certa!
+      end;
     end
     else
     begin
-      // A REDE AINDA ESTÁ TRABALHANDO: Mostra o indicador girando agora!
+      // A REDE AINDA ESTÁ TRABALHANDO: Mostra o indicador girando.
+      // Neste caso, como ainda está carregando, o ChangeDir original da Thread
+      // vai usar a variável nova sozinho, sem precisarmos fazer nada!
       ActivityIndicator1.Visible := True;
     end;
+    // ----------------------------------------
   end
   else
   begin
@@ -404,7 +506,7 @@ begin
   end;
 end;
 
-procedure TDownloadFTP_CaixaLocal.btnDownloadClick(Sender: TObject);
+procedure TfrmPrincipal.btnDownloadClick(Sender: TObject);
 var
   NomeArquivo, CaminhoLocal, CaminhoCompletoDestino: string;
   i: Integer;
@@ -502,7 +604,11 @@ begin
   // BLOQUEIA A INTERFACE
   FDownloadEmAndamento := True;
   btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
   btnDownload.Enabled := False; // Bloqueia o botão para não clicar duas vezes
+
+  TimerInatividade.Enabled := False;
+
 
   TThread.CreateAnonymousThread(procedure
   var
@@ -531,7 +637,7 @@ begin
               lblProgresso.Caption := 'Reconectando ao servidor...';
             end);
             IdFTP1.Connect;
-            IdFTP1.ChangeDir('/CAIXALOCAL/');
+            IdFTP1.ChangeDir(FPastaDestinoFTP);
           end;
 
           // 2. CRIA O STREAM DE ARQUIVO SEGURO
@@ -575,9 +681,16 @@ begin
               // Pausa a Thread e pergunta na tela do usuário
               TThread.Synchronize(nil, procedure
               begin
+                TimerInatividade.Enabled := True;
+
+
                 if MessageDlg('Falha de Download (Erro: ' + MsgErro + ').' + #13#10 +
                               'Deseja tentar novamente?', mtConfirmation, [mbYes, mbNo], 0) = mrYes then
                   Continuar := True;
+
+                  if Continuar then
+                  TimerInatividade.Enabled := False;
+
               end);
 
               if Continuar then
@@ -614,8 +727,16 @@ begin
     TThread.Synchronize(nil, procedure
     begin
       FDownloadEmAndamento := False;
-      btnConectar.Enabled := True;
-      btnDownload.Enabled := (lvArquivos.Selected <> nil); // Reativa o botão se tiver selecionado
+
+      // SÓ DESTRAVA A TELA SE O TIMER NÃO TIVER BLOQUEADO TUDO ENQUANTO ESTAVA BAIXANDO
+      if FSenhaLiberada then
+      begin
+        btnConectar.Enabled := True;
+        btnAlternaPasta.Enabled := True;
+        btnDownload.Enabled := (lvArquivos.Selected <> nil);
+        TimerInatividade.Enabled := True; // Voltou ao normal, começa a contar os 10 minutos
+      end;
+
 
       if Sucesso then
       begin
@@ -645,7 +766,7 @@ begin
   end).Start;
 end;
 
-procedure TDownloadFTP_CaixaLocal.btnSobreClick(Sender: TObject);
+procedure TfrmPrincipal.btnSobreClick(Sender: TObject);
 begin
   // 1. Verifica se a janela já foi criada na memória
   if not Assigned(FormSobre) then
@@ -659,7 +780,7 @@ begin
   FormSobre.BringToFront;
 end;
 
-procedure TDownloadFTP_CaixaLocal.FormCloseQuery(Sender: TObject;
+procedure TfrmPrincipal.FormCloseQuery(Sender: TObject;
   var CanClose: Boolean);
 var
   Tentativa: Integer;
@@ -690,7 +811,7 @@ begin
 end;
 
 
-procedure TDownloadFTP_CaixaLocal.FormCreate(Sender: TObject);
+procedure TfrmPrincipal.FormCreate(Sender: TObject);
 var
   PastaPadrao: string;
   CaminhoTempDLL: string;
@@ -698,8 +819,13 @@ var
 
 begin
 
+  RemoveExecutavelAntigo;
+
+  FVerificandoAtualizacao := True;
+
   FSenhaLiberada := False;
   FPararConexao := False;
+  FPastaDestinoFTP := '/CAIXALOCAL/';
 
   // ESCONDE O INDICADOR DE CARREGAMENTO INICIALMENTE
   ActivityIndicator1.Visible := False;
@@ -710,10 +836,29 @@ begin
   btnAbrirNoExplorer.Enabled := False;
   BitBtn1.Enabled := False;
   btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
 
   // 2. PREPARA O VISUAL DA SENHA
   edtSenha.Visible := True;
   btnConfirmarSenha.Visible := True;
+  if (GetEnvironmentVariable('EMPFACIL') = 'CL0UD') or IsRedeSuporte then
+begin
+  FPastaDestinoFTP := '/BACKUP/'; // Muda a rota
+  Edit1.text := FPastaDestinoFTP;
+  FSenhaLiberada := True;         // Fura a senha principal
+  FUploadLiberado := True;        // Destrava os recursos do CTRL+U
+
+  // Esconde os visuais de senha
+  edtSenha.Visible := False;
+  btnConfirmarSenha.Visible := False;
+  lblSenhaExclusiva.Visible := False;
+
+  // Destrava os botões
+  btnSobre.Enabled := True;
+  btnAbrirNoExplorer.Enabled := True;
+  BitBtn1.Enabled := True;
+  ActivityIndicator1.Visible := True;
+end;
 
 
 // 1. DEFINE A PASTA TEMPORÁRIA: Vai criar uma pasta "FTPCaixaLocal_SSL" dentro do %TEMP% do Windows
@@ -759,13 +904,16 @@ begin
   // Joga o valor no seu Edit
   edtDestino.Text := PastaPadrao;
 
+  Application.OnMessage := AppMessage;
+
+  DragAcceptFiles(Self.Handle, True);
 
 
 end;
 
 
 
-procedure TDownloadFTP_CaixaLocal.FormDestroy(Sender: TObject);
+procedure TfrmPrincipal.FormDestroy(Sender: TObject);
 var
 
   CaminhoTempDLL: string;
@@ -834,6 +982,8 @@ begin
 
   end;
 
+  DragAcceptFiles(Self.Handle, False);
+
 end;
 
 
@@ -843,50 +993,99 @@ end;
 
 
 
-procedure TDownloadFTP_CaixaLocal.FormShow(Sender: TObject);
+procedure TfrmPrincipal.FormKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+var
+  Senha: string;
+begin
+  // Se apertar CTRL + U >>
+  if (Key = ord('U')) and (ssCtrl in Shift) then
+  begin
+  if FDownloadEmAndamento then
+    begin
+        Exit; // Aborta e não pede a senha!
+    end;
+
+    if not FUploadLiberado then
+    begin
+      Senha := '';
+      if InputQuery('Área Restrita', #31'Senha de Upload - USO EXCLUSIVO do suporte:', Senha) then
+      begin
+        if Senha = SENHA_UPLOAD then
+        begin
+          FUploadLiberado := True;
+          FSenhaLiberada := True; // Destrava também o uso normal do sistema
+          TimerInatividade.Enabled := True;
+
+          // Oculta a tela inicial de bloqueio
+          edtSenha.Visible := False;
+          btnConfirmarSenha.Visible := False;
+          lblSenhaExclusiva.Visible := False;
+          btnSobre.Enabled := True;
+          btnAbrirNoExplorer.Enabled := True;
+          BitBtn1.Enabled := True;
+
+          if not FCarregando then
+          begin
+            pnlLoading.Visible := False;
+            btnConectar.Enabled := True;
+            btnAlternaPasta.Enabled := True;
+          end;
+
+        end
+        else
+          ShowMessage('Senha Incorreta!');
+      end;
+    end;
+  end;
+end;
+
+procedure TfrmPrincipal.FormShow(Sender: TObject);
 begin
   // O FormShow acontece 1 milissegundo depois que a tela já apareceu para o usuário.
   // Forçamos a chamada do clique do botão conectar, aproveitando todo o código que você já fez lá!
 
   Application.ProcessMessages; // Força o Windows a terminar de pintar a tela inteira
-  ConectarEmSegundoPlano;      // Dispara a Thread invisível
+  VerificarAtualizacaoEmSegundoPlano;      // Dispara a Thread invisível
   if edtSenha.CanFocus then
     edtSenha.SetFocus;
 
 end;
 
-procedure TDownloadFTP_CaixaLocal.IdFTP1Work(ASender: TObject;
+procedure TfrmPrincipal.IdFTP1Work(ASender: TObject;
   AWorkMode: TWorkMode; AWorkCount: Int64);
 begin
-  if (not FDownloadEmAndamento) or FPararConexao then Exit;
+  if ((not FDownloadEmAndamento) and (not FUploadEmAndamento)) or FPararConexao then Exit;
 
   // O SEGREDO DO VCL STYLE: Usamos QUEUE em vez de Synchronize! (Sua lógica mantida)
-  TThread.Queue(nil, procedure
+TThread.Queue(nil, procedure
   var
-    TotalBaixado: Int64;
+    TotalTransferido: Int64;
+    Acao: string;
   begin
-    // --- MUDANÇA AQUI ---
-    // Soma o tamanho que já estava no disco com o que o Indy está baixando nesta sessão
-    TotalBaixado := FBytesJaBaixados + AWorkCount;
-    // --------------------
-
-    pbDownload.Position := TotalBaixado;
-    Taskbar1.ProgressValue := TotalBaixado;
-
-    // Cálculo seguro de porcentagem (Sua lógica mantida)
-    if pbDownload.Max > 1 then
-      lblProgresso.Caption := 'Baixando: ' + FormatFloat('0.00', (TotalBaixado / pbDownload.Max) * 100) + '%'
+    // Define a palavra certa com base no que está acontecendo
+    if FAtualizando then
+      Acao := 'Baixando atualização: '
+    else if FUploadEmAndamento then
+      Acao := 'Enviando: '
     else
-      // Se o tamanho for desconhecido (Max = 1), mostra apenas os MB baixados
-      lblProgresso.Caption := 'Baixando: ' + FormatFloat('#,##0.00 MB', TotalBaixado / 1048576);
+      Acao := 'Baixando: ';
+
+    TotalTransferido := FBytesJaBaixados + AWorkCount;
+    pbDownload.Position := TotalTransferido;
+    Taskbar1.ProgressValue := TotalTransferido;
+
+    if pbDownload.Max > 1 then
+      lblProgresso.Caption := Acao + FormatFloat('0.00', (TotalTransferido / pbDownload.Max) * 100) + '%'
+    else
+      lblProgresso.Caption := Acao + FormatFloat('#,##0.00 MB', TotalTransferido / 1048576);
   end);
 end;
 
-procedure TDownloadFTP_CaixaLocal.IdFTP1WorkBegin(ASender: TObject;
+procedure TfrmPrincipal.IdFTP1WorkBegin(ASender: TObject;
   AWorkMode: TWorkMode; AWorkCountMax: Int64);
 begin
-  if not FDownloadEmAndamento then
-    Exit;
+  if (not FDownloadEmAndamento) and (not FUploadEmAndamento) then Exit;
 
   TThread.Synchronize(nil, procedure
   var
@@ -914,7 +1113,12 @@ begin
 
     Taskbar1.ProgressState := TTaskBarProgressState.Normal;
 
-    lblProgresso.Caption := 'Iniciando download...';
+    if FAtualizando then
+      lblProgresso.Caption := 'Atualizando Aplicativo...'
+    else if FUploadEmAndamento then
+      lblProgresso.Caption := 'Iniciando envio...'
+    else
+      lblProgresso.Caption := 'Iniciando download...';
 
     pbDownload.Visible := True;
     lblProgresso.Visible := True;
@@ -923,12 +1127,11 @@ begin
   end);
 end;
 
-procedure TDownloadFTP_CaixaLocal.IdFTP1WorkEnd(ASender: TObject;
+procedure TfrmPrincipal.IdFTP1WorkEnd(ASender: TObject;
   AWorkMode: TWorkMode);
 
 begin
-  if not FDownloadEmAndamento then
-    Exit;
+if (not FDownloadEmAndamento) and (not FUploadEmAndamento) then Exit;
 
   TThread.Synchronize(nil, procedure
   begin
@@ -940,7 +1143,7 @@ begin
   end);
 end;
 
-procedure TDownloadFTP_CaixaLocal.lvArquivosColumnClick(Sender: TObject;
+procedure TfrmPrincipal.lvArquivosColumnClick(Sender: TObject;
   Column: TListColumn);
 begin
   // Se clicou na mesma coluna que já estava ordenada, apenas inverte a direção
@@ -960,7 +1163,7 @@ begin
   AtualizarSetasOrdenacao;
 end;
 
-procedure TDownloadFTP_CaixaLocal.lvArquivosCompare(Sender: TObject; Item1,
+procedure TfrmPrincipal.lvArquivosCompare(Sender: TObject; Item1,
   Item2: TListItem; Data: Integer; var Compare: Integer);
 var
   TextoTamanho1, TextoTamanho2: string;
@@ -1010,7 +1213,7 @@ begin
     Compare := -Compare;
 end;
 
-procedure TDownloadFTP_CaixaLocal.lvArquivosDblClick(Sender: TObject);
+procedure TfrmPrincipal.lvArquivosDblClick(Sender: TObject);
 var
   NomeItem: string;
   i: Integer;
@@ -1065,12 +1268,45 @@ begin
   end;
 end;
 
-procedure TDownloadFTP_CaixaLocal.lvArquivosKeyDown(Sender: TObject;
+procedure TfrmPrincipal.lvArquivosKeyDown(Sender: TObject;
   var Key: Word; Shift: TShiftState);
 var
   Senha, NomeArquivo: string;
+  DropHandle: HDROP;
+  Count, i: Integer;
+  FileName: array[0..MAX_PATH] of Char;
+  Fila: TStringList;
 begin
-  // Verifica se a tecla foi "Delete" e se o "Ctrl" estava pressionado junto
+  // --- 1. LÓGICA DO CTRL + V (UPLOAD) ---
+  if (Key = ord('V')) and (ssCtrl in Shift) then
+  begin
+    if (not FUploadLiberado) or FUploadEmAndamento then Exit;
+
+    // Verifica se há ARQUIVOS copiados na área de transferência (CF_HDROP)
+    if Clipboard.HasFormat(CF_HDROP) then
+    begin
+      Clipboard.Open;
+      try
+        DropHandle := Clipboard.GetAsHandle(CF_HDROP);
+        if DropHandle <> 0 then
+        begin
+          Count := DragQueryFile(DropHandle, $FFFFFFFF, nil, 0);
+          Fila := TStringList.Create;
+          for i := 0 to Count - 1 do
+          begin
+            DragQueryFile(DropHandle, i, FileName, MAX_PATH);
+            Fila.Add(FileName);
+          end;
+          ProcessarFilaUpload(Fila);
+        end;
+      finally
+        Clipboard.Close;
+      end;
+    end;
+    Exit; // Sai para não disparar outras coisas do teclado
+  end;
+
+  // --- 2. LÓGICA DO CTRL + DELETE (EXCLUSÃO) ---
   if (Key = VK_DELETE) and (ssCtrl in Shift) then
   begin
     // Se não tem nada selecionado, ignora
@@ -1080,7 +1316,7 @@ begin
     Senha := '';
 
     // O #31 é o segredo do Delphi para ocultar os caracteres no InputQuery!
-      if InputQuery('Segurança', #31'Digite a senha para excluir:', Senha) then
+    if InputQuery('Segurança', #31'Digite a senha para excluir:', Senha) then
     begin
       if Senha = SENHA_APP then
       begin
@@ -1118,8 +1354,7 @@ begin
             end
             else
             begin
-              ShowMessage('Arquivo excluído com sucesso do servidor!');
-              // Chama sua procedure que já atualiza a lista de arquivos
+              // Chama a procedure que já atualiza a lista de arquivos
               AtualizarListaEmSegundoPlano;
             end;
           end);
@@ -1133,15 +1368,15 @@ begin
   end;
 end;
 
-procedure TDownloadFTP_CaixaLocal.lvArquivosSelectItem(Sender: TObject;
+procedure TfrmPrincipal.lvArquivosSelectItem(Sender: TObject;
   Item: TListItem; Selected: Boolean);
 begin
-  if FDownloadEmAndamento then Exit;
+  if FDownloadEmAndamento or FUploadEmAndamento then Exit;
   // O botão de download só fica ativo se o FTP estiver conectado E se houver algum item selecionado na lista
   btnDownload.Enabled := IdFTP1.Connected and (lvArquivos.Selected <> nil);
 end;
 
-procedure TDownloadFTP_CaixaLocal.btnAbrirNoExplorerClick(Sender: TObject);
+procedure TfrmPrincipal.btnAbrirNoExplorerClick(Sender: TObject);
 var
   CaminhoPasta: string;
   CaminhoArquivo: string;
@@ -1176,5 +1411,532 @@ begin
   // Então apenas abre a pasta destino normalmente e MAXIMIZADA.
   ShellExecute(Handle, 'explore', PChar(CaminhoPasta), nil, nil, SW_MAXIMIZE);
 end;
+
+procedure TfrmPrincipal.btnAlternaPastaClick(Sender: TObject);
+begin
+  // 1. Segurança: Não deixa alternar se estiver no meio de um download/upload
+  if FDownloadEmAndamento or FUploadEmAndamento then
+  begin
+    ShowMessage('Aguarde o processo atual terminar para mudar de pasta.');
+    Exit;
+  end;
+
+  // 2. Não deixa alternar se nem conectou ainda
+  if not IdFTP1.Connected then Exit;
+
+  // 3. A Mágica da Alternância (Toggle)
+  if FPastaDestinoFTP = '/CAIXALOCAL/' then
+    FPastaDestinoFTP := '/BACKUP/'
+  else
+    FPastaDestinoFTP := '/CAIXALOCAL/';
+
+
+  Edit1.text := FPastaDestinoFTP;
+
+
+  // 5. Aciona a sua função invisível. Como arrumamos ela no Passo 2,
+  // ela vai ler a nova variável, mudar a pasta no servidor e atualizar a tela!
+  AtualizarListaEmSegundoPlano;
+end;
+
+procedure TfrmPrincipal.AppMessage(var Msg: TMsg; var Handled: Boolean);
+begin
+  // Se a tela já está destravada e o usuário moveu o mouse ou apertou uma tecla
+  if FSenhaLiberada then
+  begin
+    if (Msg.message = WM_MOUSEMOVE) or (Msg.message = WM_KEYDOWN) then
+    begin
+      // Só reseta a contagem se o Timer estiver ativado
+      // (Se estiver baixando, o Timer estará desativado, então o mouse é ignorado)
+      if TimerInatividade.Enabled then
+      begin
+        TimerInatividade.Enabled := False;
+        TimerInatividade.Enabled := True; // Zera a contagem de 10 min
+      end;
+    end;
+  end;
+end;
+
+
+procedure TfrmPrincipal.TimerInatividadeTimer(Sender: TObject);
+begin
+  TravarTelaPorInatividade(Self)
+end;
+
+procedure TfrmPrincipal.TravarTelaPorInatividade(Sender: TObject);
+var
+  H: HWND;
+begin
+  TimerInatividade.Enabled := False; // Para a contagem
+
+  // 1. FECHA MENSAGENS PENDENTES: Se tiver alguma MessageBox aberta (ex: Deseja tentar novamente?),
+  // nós achamos ela na memória e mandamos o comando do Windows para fechar (Cancelar)!
+  H := GetActiveWindow;
+  if (H <> 0) and (H <> Self.Handle) then
+    PostMessage(H, WM_CLOSE, 0, 0);
+
+  // 2. RESTAURA A TELA INICIAL (Apenas trava a interface visual)
+  FSenhaLiberada := False;
+
+  // Mostra o painel branco de fundo cobrindo tudo
+  pnlLoading.Visible := True;
+  pnlLoading.BringToFront;
+
+  // Limpa e exibe a senha
+  edtSenha.Clear;
+  edtSenha.Visible := True;
+  btnConfirmarSenha.Visible := True;
+  lblSenhaExclusiva.Visible := True;
+
+  // Esconde barras de progresso ou bolinhas de carregamento
+  ActivityIndicator1.Visible := False;
+  lblProgresso.Visible := False;
+  pbDownload.Visible := False;
+
+  // Trava botões que ficam por trás
+  btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
+  btnDownload.Enabled := False;
+  btnSobre.Enabled := False;
+  btnAbrirNoExplorer.Enabled := False;
+  BitBtn1.Enabled := False;
+end;
+
+
+
+procedure TfrmPrincipal.WMDropFiles(var Msg: TWMDropFiles);
+var
+  i, Count: Integer;
+  FileName: array[0..MAX_PATH] of Char;
+  Fila: TStringList;
+begin
+  if not FUploadLiberado then Exit;
+  if FUploadEmAndamento then
+  begin
+    ShowMessage('Aguarde o envio atual terminar antes de arrastar mais arquivos!');
+    Exit;
+  end;
+
+  // Conta quantos arquivos o usuário arrastou de uma vez
+  Count := DragQueryFile(Msg.Drop, $FFFFFFFF, nil, 0);
+  Fila := TStringList.Create;
+  try
+    for i := 0 to Count - 1 do
+    begin
+      DragQueryFile(Msg.Drop, i, FileName, MAX_PATH);
+      Fila.Add(FileName);
+    end;
+
+    if Fila.Count > 0 then
+      ProcessarFilaUpload(Fila)
+    else
+      Fila.Free;
+  finally
+    DragFinish(Msg.Drop);
+  end;
+end;
+
+
+
+procedure TfrmPrincipal.ProcessarFilaUpload(FilaArquivos: TStringList);
+begin
+  FUploadEmAndamento := True;
+  btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
+  btnDownload.Enabled := False;
+  TimerInatividade.Enabled := False; // Desliga o bloqueio automático enquanto envia!
+
+  TThread.CreateAnonymousThread(procedure
+  var
+    i, Tentativas: Integer;
+    CaminhoLocal, Extensao, NomeFTP, MsgErro: string;
+    Sucesso, Continuar: Boolean;
+  begin
+    try
+      for i := 0 to FilaArquivos.Count - 1 do
+      begin
+        if FPararConexao then Break; // Se o cara fechar o app, aborta o loop
+
+        CaminhoLocal := FilaArquivos[i];
+        Extensao := LowerCase(ExtractFileExt(CaminhoLocal));
+        NomeFTP := ExtractFileName(CaminhoLocal);
+
+        // BLOQUEIO DE SEGURANÇA SEVERO
+        if (Extensao = '.exe') or (Extensao = '.bat') or (Extensao = '.php') then
+        begin
+          TThread.Synchronize(nil, procedure begin
+            ShowMessage('Upload Cancelado: O arquivo "' + NomeFTP + '" tem um tipo nao permitido.');
+          end);
+          Continue; // Ignora esse arquivo e pula pro próximo da lista
+        end;
+
+        // Avisa a tela qual arquivo da fila está subindo agora
+        TThread.Synchronize(nil, procedure begin
+           lblProgresso.Caption := 'Enviando ao FTP(' + IntToStr(i+1) + '/' + IntToStr(FilaArquivos.Count) + '): ';
+           lblProgresso.Visible := True;
+           pbDownload.Visible := True;
+        end);
+
+        // Conecta se caiu e direciona a pasta
+        if not IdFTP1.Connected then IdFTP1.Connect;
+        IdFTP1.ChangeDir(FPastaDestinoFTP);
+        IdFTP1.TransferType := ftBinary;
+
+Sucesso := False;
+Tentativas := 0;
+
+// Inicia o laço de tentativas para ESTE arquivo
+while (not Sucesso) and FUploadEmAndamento do
+begin
+  try
+    // Se caiu a internet, reconecta silenciosamente
+    if not IdFTP1.Connected then IdFTP1.Connect;
+
+    try IdFTP1.Delete(NomeFTP + '.part'); except end; // Faxina inicial
+    FBytesJaBaixados := 0;
+
+    // Sobe como .part e depois renomeia
+    IdFTP1.Put(CaminhoLocal, NomeFTP + '.part', True);
+
+    // Se passou da linha de cima, o envio chegou a 100%. Renomeia para o arquivo final.
+    try IdFTP1.Delete(NomeFTP); except end;
+    IdFTP1.Rename(NomeFTP + '.part', NomeFTP);
+
+    // Se chegou aqui, não deu erro
+    Sucesso := True;
+  except
+    on E: Exception do
+    begin
+      MsgErro := E.Message;
+      Inc(Tentativas);
+
+      if Tentativas >= 3 then // Falhou 3 vezes
+      begin
+        Continuar := False;
+
+        // Pausa a Thread e pergunta na tela do usuário
+        TThread.Synchronize(nil, procedure
+        begin
+          if MessageDlg('Falha ao enviar: ' + NomeFTP + #13#10 + 'Erro: ' + MsgErro + #13#10 +
+                        'Deseja tentar enviar este arquivo novamente?', mtError, [mbYes, mbNo], 0) = mrYes then
+            Continuar := True;
+        end);
+
+        if Continuar then
+          Tentativas := 0 // Zera para tentar mais 3 vezes
+        else
+        begin
+          // O usuário desistiu deste arquivo. Apaga o fragmento do FTP e quebra o while.
+          try IdFTP1.Delete(NomeFTP + '.part'); except end;
+          Break;
+        end;
+      end;
+
+      // Espera 3 segundos antes de tentar de novo
+      Sleep(3000);
+    end;
+  end;
+end; // Fim do while de tentativas
+
+      end;
+    finally
+      FilaArquivos.Free; // Libera a lista de arquivos da memória do Windows
+
+      // DEVOLVE O CONTROLE PARA O USUÁRIO
+      TThread.Synchronize(nil, procedure begin
+         FUploadEmAndamento := False;
+         if FSenhaLiberada then
+         begin
+           btnConectar.Enabled := True;
+           btnAlternaPasta.Enabled := True;
+           btnDownload.Enabled := (lvArquivos.Selected <> nil);
+           TimerInatividade.Enabled := True; // Liga a proteção de 10 minutos de novo
+         end;
+         lblProgresso.Visible := False;
+         pbDownload.Visible := False;
+
+         // Terminamos de mandar tudo? Recarrega a tela para os arquivos novos aparecerem!
+         AtualizarListaEmSegundoPlano;
+      end);
+    end;
+  end).Start;
+end;
+
+
+
+function TfrmPrincipal.IsRedeSuporte: Boolean;
+var
+  ListaIPs: TStringList;
+  i: Integer;
+  TemRamal, TemIPValido: Boolean;
+begin
+  Result := False;
+
+  // 1. Verifica se a variável de ambiente RAMAL existe (é diferente de vazio)
+  TemRamal := GetEnvironmentVariable('RAMAL') <> '';
+
+  if not TemRamal then Exit;
+
+  TemIPValido := False;
+
+  // 2. Liga o motor de rede do Indy para vasculhar a máquina
+  TIdStack.IncUsage;
+  try
+    ListaIPs := TStringList.Create;
+    try
+      GStack.AddLocalAddressesToList(ListaIPs); // Puxa todos os IPs do PC
+
+      // Vasculha a lista de IPs do computador
+      for i := 0 to ListaIPs.Count - 1 do
+      begin
+        // Se o IP começar exatamente com '10.1.1.', marcamos como válido
+        if Pos('10.1.1.', ListaIPs[i]) = 1 then
+        begin
+          TemIPValido := True;
+          Break; // Já achou, pode parar de procurar
+        end;
+      end;
+    finally
+      ListaIPs.Free;
+    end;
+  finally
+    TIdStack.DecUsage; // Desliga o motor de rede do Indy
+  end;
+
+  // Só retorna VERDADEIRO se tem a variável E tem o IP correto
+  Result := TemIPValido;
+end;
+
+
+
+procedure TfrmPrincipal.RemoveExecutavelAntigo;
+var
+  CaminhoAntigo: string;
+begin
+  // Procura pelo executável com final .old na mesma pasta do sistema
+  CaminhoAntigo := ParamStr(0) + '.old';
+  if FileExists(CaminhoAntigo) then
+  begin
+    try
+      DeleteFile(CaminhoAntigo);
+    except
+      // Se o Windows ainda estiver travando o arquivo, ignora em silêncio
+    end;
+  end;
+end;
+
+
+procedure TfrmPrincipal.VerificarAtualizacaoEmSegundoPlano;
+begin
+  // 1. AVISA O SISTEMA E A TELA QUE A REDE ESTÁ TRABALHANDO
+  FVerificandoAtualizacao := True;
+  FCarregando := True;
+
+  // Prepara o visual inicial
+  pnlLoading.BringToFront;
+  pnlLoading.Visible := True;
+  btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
+  lvArquivos.Items.Clear;
+
+  TThread.CreateAnonymousThread(procedure
+  var
+    ListaVersao: TStringList;
+    VersaoNuvem, ModoAtualizacao: string;
+    ExisteNovaVersao, Forcar: Boolean;
+    MS: TMemoryStream;
+  begin
+    ExisteNovaVersao := False;
+    Forcar := False;
+    ListaVersao := TStringList.Create;
+
+    try
+      try
+        // 2. USA A CONEXÃO OFICIAL DO SISTEMA (Abre uma única vez para tudo!)
+        if not IdFTP1.Connected then
+        begin
+          IdFTP1.Host := FTP_HOST;
+          IdFTP1.Port := 21;
+          IdFTP1.Username := FTP_USER;
+          IdFTP1.Password := FTP_PASS;
+          IdFTP1.Passive := True;
+          IdFTP1.IOHandler := IdSSLIOHandlerSocketOpenSSL1;
+          IdFTP1.UseTLS := TIdUseTLS.utUseExplicitTLS;
+          IdFTP1.DataPortProtection := TIdFTPDataPortSecurity.ftpdpsPrivate;
+          IdFTP1.NATKeepAlive.UseKeepAlive := True;
+          IdFTP1.NATKeepAlive.IdleTimeMS := 30000;
+          IdSSLIOHandlerSocketOpenSSL1.SSLOptions.Method := TIdSSLVersion.sslvTLSv1_2;
+          IdSSLIOHandlerSocketOpenSSL1.SSLOptions.Mode := TIdSSLMode.sslmClient;
+
+          IdFTP1.Connect;
+        end;
+
+        // 3. VAI NA PASTA SUPORTE RAPIDINHO
+        IdFTP1.ChangeDir('/suporte/');
+
+        // 4. VERIFICA A VERSÃO
+        MS := TMemoryStream.Create;
+        try
+          IdFTP1.Get('versao.txt', MS, False);
+          MS.Position := 0;
+          ListaVersao.LoadFromStream(MS);
+        finally
+          MS.Free;
+        end;
+
+        if ListaVersao.Count > 0 then
+        begin
+          VersaoNuvem := Trim(ListaVersao[0]);
+          if ListaVersao.Count > 1 then
+            ModoAtualizacao := UpperCase(Trim(ListaVersao[1]))
+          else
+            ModoAtualizacao := 'OPCIONAL';
+
+          if VersaoNuvem > UnitSobre.PegarVersaoEXE then
+          begin
+            // Verifica se o arquivo novo realmente existe lá
+            if IdFTP1.Size('EFDownloadFTP.exe') > 0 then
+            begin
+              ExisteNovaVersao := True;
+              Forcar := (ModoAtualizacao = 'FORCADO') or (ModoAtualizacao = 'SIM');
+            end;
+          end;
+        end;
+      except
+        // Qualquer falha de rede aqui (ou falta do arquivo) é ignorada em silêncio
+      end;
+    finally
+      ListaVersao.Free;
+    end;
+
+    // 5. SINCRONIZA COM A TELA E DECIDE O FLUXO
+    TThread.Synchronize(nil, procedure
+    var
+      QuererAtualizar: Boolean;
+    begin
+      FVerificandoAtualizacao := False; // Já acabou a verificação!
+      lblProgresso.Visible := False;
+
+      if ExisteNovaVersao then
+      begin
+        if Forcar then
+          QuererAtualizar := True
+        else
+          QuererAtualizar := (MessageDlg('Uma nova versão do sistema (' + VersaoNuvem + ') está disponível!' + #13#10 +
+                                        'Deseja atualizar agora?', mtConfirmation, [mbYes, mbNo], 0) = mrYes);
+
+        if QuererAtualizar then
+          RealizarDownloadAtualizacao
+        else
+          AtualizarListaEmSegundoPlano; // REJEITOU: Usa a conexão aberta para carregar a lista!
+      end
+      else
+      begin
+        // SEM ATUALIZAÇÃO: Aproveita que a conexão SSL já está 100% aberta
+        // e apenas pede para carregar a lista da pasta padrão!
+        AtualizarListaEmSegundoPlano;
+      end;
+    end);
+  end).Start;
+end;
+       
+
+
+procedure TfrmPrincipal.RealizarDownloadAtualizacao;
+begin
+  FAtualizando := True;
+  FDownloadEmAndamento := True;
+
+  // 1. ARRUMA O VISUAL DA TELA EXATAMENTE COMO VOCÊ PEDIU
+  pnlLoading.Visible := True;
+  pnlLoading.BringToFront;
+  edtSenha.Visible := False;
+  btnConfirmarSenha.Visible := False;
+  lblSenhaExclusiva.Visible := False;
+
+  lblProgresso.Caption := 'Atualizando Aplicativo...';
+  lblProgresso.Visible := True;
+  pbDownload.Position := 0;
+  pbDownload.Visible := True;
+  ActivityIndicator1.Visible := True; // Põe o "loading" para girar
+
+  // Trava os botões por segurança
+  btnConectar.Enabled := False;
+  btnAlternaPasta.Enabled := False;
+  btnDownload.Enabled := False;
+  btnSobre.Enabled := False;
+  btnAbrirNoExplorer.Enabled := False;
+  BitBtn1.Enabled := False;
+
+  // 2. DISPARA O DOWNLOAD DA NOVA VERSÃO
+  TThread.CreateAnonymousThread(procedure
+  var
+    CaminhoExeAtual, CaminhoExeNovo, CaminhoExeVelho: string;
+    StreamNovoExe: TFileStream;
+    Sucesso: Boolean;
+  begin
+    Sucesso := False;
+    CaminhoExeAtual := ParamStr(0); // Pega o caminho de onde o programa está instalado
+    CaminhoExeNovo := CaminhoExeAtual + '.new';
+    CaminhoExeVelho := CaminhoExeAtual + '.old';
+
+    try
+      if FileExists(CaminhoExeNovo) then DeleteFile(CaminhoExeNovo);
+
+      StreamNovoExe := TFileStream.Create(CaminhoExeNovo, fmCreate or fmShareDenyWrite);
+      try
+        if not IdFTP1.Connected then IdFTP1.Connect;
+        IdFTP1.ChangeDir('/suporte/');
+        IdFTP1.TransferType := ftBinary;
+
+        FBytesJaBaixados := 0;
+        FTamanhoArquivoAtual := IdFTP1.Size('EFDownloadFTP.exe'); // Pega tamanho para a barra de progresso
+
+        // Usa o FTP oficial. Isso vai acionar automaticamente suas barrinhas na tela!
+        IdFTP1.Get('EFDownloadFTP.exe', StreamNovoExe, False);
+        Sucesso := True;
+      finally
+        StreamNovoExe.Free;
+        if IdFTP1.Connected then IdFTP1.Disconnect;
+      end;
+
+      if Sucesso then
+      begin
+        TThread.Synchronize(nil, procedure
+        begin
+          // O "TRUQUE DE OURO" CONTRA O ANTIVÍRUS COMEÇA AQUI:
+          if FileExists(CaminhoExeVelho) then DeleteFile(CaminhoExeVelho);
+
+          // Renomeia o executável aberto para .old (O Windows deixa!)
+          if RenameFile(CaminhoExeAtual, CaminhoExeVelho) then
+          begin
+            // Renomeia o .new para o nome oficial
+            if RenameFile(CaminhoExeNovo, CaminhoExeAtual) then
+            begin
+              // Abre a versão nova
+              ShellExecute(0, 'open', PChar(CaminhoExeAtual), nil, nil, SW_SHOWNORMAL);
+              // Fecha a versão velha (que é esta!)
+              Application.Terminate;
+            end;
+          end;
+        end);
+      end;
+    except
+      on E: Exception do
+      begin
+        // Se der erro de internet no meio da atualização, avisa e vai pra tela normal de login
+        TThread.Synchronize(nil, procedure
+        begin
+          ShowMessage('Falha ao atualizar o aplicativo: ' + E.Message);
+          FAtualizando := False;
+          FDownloadEmAndamento := False;
+          ConectarEmSegundoPlano;
+        end);
+      end;
+    end;
+  end).Start;
+end;
+
+
 
 end.
